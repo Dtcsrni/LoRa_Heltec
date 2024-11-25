@@ -17,6 +17,7 @@
 #define LORA_SYMBOL_TIMEOUT 0
 #define LORA_FIX_LENGTH_PAYLOAD_ON false
 #define LORA_IQ_INVERSION_ON false
+#define BUFFER_SIZE 100  // Define el tamaño del payload
 
 // Configuración GPS y OLED
 #define RXD2 45
@@ -38,7 +39,9 @@ TinyGPSPlus gps;
 char txpacket[BUFFER_SIZE];
 char rxpacket[BUFFER_SIZE];
 RadioEvents_t RadioEvents;
-typedef enum { LOWPOWER, STATE_RX, STATE_TX } Estados;
+typedef enum { LOWPOWER,
+               STATE_RX,
+               STATE_TX } Estados;
 Estados estado;
 
 // Variables de sistema
@@ -49,7 +52,7 @@ String fecha, hora;
 float nivelBateria = 0.0;
 
 // Configuración de parámetros ADC
-#define ADC_MAX_VALUE 4095  // Valor máximo del ADC (para un ADC de 12 bits)
+#define ADC_MAX_VALUE 4095     // Valor máximo del ADC (para un ADC de 12 bits)
 #define REFERENCE_VOLTAGE 3.3  // Voltaje de referencia (ajustar si es necesario)
 
 void iniciarDisplay() {
@@ -63,20 +66,21 @@ void iniciarDisplay() {
   display.setFont(ArialMT_Plain_10);  // Configura fuente única
 }
 
-void mostrarOLED(const String &mensaje1, const String &mensaje2, const String &mensaje3, const String &mensaje4) {
+void mostrarOLED(const String &mensaje1, const String &mensaje2, const String &mensaje3, const String &mensaje4, const String &mensaje5) {
   display.clear();
 
   // Dibuja un borde moderno
-  display.drawRect(0, 0, 128, 64);  // Rectángulo exterior
+  display.drawRect(0, 0, 128, 64);   // Rectángulo exterior
   display.drawLine(0, 16, 128, 16);  // Línea separadora superior
-
+  display.drawString(5, 3, "Sensor");
   // Muestra la información principal
   display.setFont(ArialMT_Plain_10);
-  display.drawString(0, 2, mensaje1);  // Línea superior (Latitud)
-  display.drawString(0, 14, mensaje2);  // Segunda línea (Longitud)
-  display.drawLine(0, 40, 128, 40);     // Línea separadora para la hora y batería
-  display.drawString(0, 44, mensaje3);  // Línea inferior (Hora)
-  display.drawString(0, 54, mensaje4);  // Línea de batería
+  display.drawString(0, 15, mensaje1);   // Línea superior (Latitud)
+  display.drawString(0, 25, mensaje2);  // Segunda línea (Longitud)
+  display.drawLine(0, 30, 128, 40);     // Línea separadora para la hora y batería
+  display.drawString(0, 33, mensaje3);  // Línea inferior (Hora)
+  display.drawString(0, 45, mensaje4);  // Línea de batería
+  display.drawString(0, 55, mensaje5);  // Línea de batería
 
   // Muestra todo en la pantalla
   display.display();
@@ -91,9 +95,9 @@ void setup() {
   Serial.println("Sistema iniciado");
   numeroTransmision = 0;
 
-  RadioEvents.TxDone = onTransmisionCompleta;
+
   RadioEvents.TxTimeout = onTiempoExpirado;
-  RadioEvents.RxDone = onRecepcionCompleta;
+
   Radio.Init(&RadioEvents);
 
   Radio.SetChannel(RF_FREQUENCY);
@@ -102,9 +106,9 @@ void setup() {
 
   // Configurar el pin de control para activar la lectura de la batería
   //digitalWrite(VBAT_READ_CNTRL_PIN, low);  // Habilitar la lectura de la batería
- // pinMode(VBAT_READ_CNTRL_PIN, OUTPUT);  
+  // pinMode(VBAT_READ_CNTRL_PIN, OUTPUT);
 
-  
+
   estado = STATE_TX;
 }
 
@@ -113,26 +117,13 @@ void loop() {
   actualizarGPS();
   medirBateria();
 
-  switch (estado) {
-    case STATE_TX:
-      delay(1000);
-      numeroTransmision++;
-      generarJSON();
-      Serial.printf("Enviando paquete: \"%s\"\n", txpacket);
-      Radio.Send((uint8_t *)txpacket, strlen(txpacket));
-      estado = LOWPOWER;
-      break;
 
-    case STATE_RX:
-      Serial.println("En modo RX");
-      Radio.Rx(0);
-      estado = LOWPOWER;
-      break;
+  delay(1000);
+  numeroTransmision++;
+  generarJSON();
+  Serial.printf("Enviando paquete: \"%s\"\n", txpacket);
+  Radio.Send((uint8_t *)txpacket, strlen(txpacket));
 
-    case LOWPOWER:
-      Radio.IrqProcess();
-      break;
-  }
 }
 
 void actualizarGPS() {
@@ -144,8 +135,9 @@ void actualizarGPS() {
     String mensaje2 = "Longitud: " + String(longitud, 6);
     String mensaje3 = "Hora: " + hora;
     String mensaje4 = "Bateria: " + String(nivelBateria, 1);
-     
-    mostrarOLED(mensaje1, mensaje2, mensaje3, mensaje4);
+    String mensaje5 = "RSSI: " + String(Rssi, 1);
+
+    mostrarOLED(mensaje1, mensaje2, mensaje3, mensaje4, mensaje5);
   }
 }
 
@@ -190,14 +182,10 @@ void generarJSON() {
   jsonDoc["longitud"] = longitud;
   jsonDoc["fecha"] = fecha;
   jsonDoc["hora"] = hora;
-  jsonDoc["bateria"] = nivelBateria;
+  jsonDoc["Rssi"] = Rssi;
   serializeJson(jsonDoc, txpacket, BUFFER_SIZE);
 }
 
-void onTransmisionCompleta() {
-  Serial.println("Transmisión completada");
-  estado = STATE_RX;
-}
 
 void onTiempoExpirado() {
   Radio.Sleep();
@@ -205,15 +193,4 @@ void onTiempoExpirado() {
   estado = STATE_TX;
 }
 
-void onRecepcionCompleta(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr) {
-  Rssi = rssi;
-  memcpy(rxpacket, payload, size);
-  rxpacket[size] = '\0';
-  tiempoUltimoMensaje = millis();
-  Radio.Sleep();
 
-  String mensaje1 = "Paquete: " + String(rxpacket);
-  String mensaje2 = "Rssi: " + String(Rssi);
-  String mensaje3 = "SNR: " + String(snr);
-  mostrarOLED(mensaje1, mensaje2, mensaje3, "Recibido");
-}
